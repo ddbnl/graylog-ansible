@@ -1,0 +1,153 @@
+- hosts: graylog
+  connection: local
+  become: yes
+  become_user: root
+  vars_prompt:
+    - name: password
+      prompt: "Enter 'admin' user password"
+      private: yes
+      default: graylog
+    - name: gl_ip
+      prompt: "IP for graylog server? (defaults to system IP)"
+      private: no
+    - name: es_cluster_name
+      prompt: "Elasticsearch cluster name"
+      default: "graylog"
+      private: no
+  tasks:
+  - name: install apt-transport-https
+    apt:
+      name: apt-transport-https
+      update_cache: true
+      state: present
+
+  - name: install openjdk-8-jre-headless
+    apt:
+      name: openjdk-8-jre-headless
+      update_cache: true
+      state: present
+
+  - name: install uuid-runtime
+    apt:
+      name: uuid-runtime
+      update_cache: true
+      state: present
+
+  - name: install pwgen
+    apt:
+      name: pwgen
+      update_cache: true
+      state: present  
+
+  - name: add mongodb repo key
+    apt_key:
+      keyserver: hkp://keyserver.ubuntu.com:80
+      id: 2930ADAE8CAF5059EE73BB4B58712A2291FA4AD5
+      state: present 
+
+  - name: install mongodb repo
+    apt_repository:
+      repo: deb https://repo.mongodb.org/apt/ubuntu xenial/mongodb-org/3.6 multiverse
+      state: present
+
+  - name: install mongodb
+    apt:
+      name: mongodb-org
+      update_cache: true
+      state: present
+
+  - name: configure mongodb service
+    service:
+      name: mongod
+      enabled: yes
+      state: started 
+
+  - name: add elasticsearch repo key
+    apt_key:
+      url: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+      state: present 
+
+  - name: add elasticsearch repo
+    apt_repository:
+      repo: deb https://artifacts.elastic.co/packages/5.x/apt stable main
+      state: present
+
+  - name: install elasticsearch
+    apt:
+      name: elasticsearch
+      update_cache: true
+      state: present
+
+  - name: set elasticsearch java path
+    replace:
+      path: /etc/default/elasticsearch
+      regexp: JAVA_HOME=$
+      replace: JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java
+
+  - name: set elasticsearch cluster name
+    replace:
+      path: /etc/elasticsearch/elasticsearch.yml
+      regexp: ^#cluster\.name:.+$
+      replace: "cluster.name: {{ es_cluster_name }}"
+
+  - name: configure elasticsearch service
+    service:
+      name: elasticsearch
+      enabled: yes
+      state: started 
+
+  - name: get graylog deb
+    apt:
+      deb: https://packages.graylog2.org/repo/packages/graylog-2.4-repository_latest.deb
+      update_cache: true
+      state: present
+
+  - name: install graylog deb
+    apt:
+      update_cache: true
+      name: graylog-server
+      state: present
+
+  - name: generate password secret
+    command: pwgen -N 1 -s 96
+    register: password_secret
+
+  - name: generate admin password hash
+    shell: "{{ password }} | shasum -a 256"
+    register: sha_password
+
+  - name: set graylog config file - password secret
+    replace:
+      path: /etc/graylog/server/server.conf
+      regexp: ^password_secret =$
+      replace: "password_secret = {{ password_secret.stdout }}"
+
+  - name: generate admin password hash
+    shell: "echo -n {{ password }} | shasum -a 256"
+    register: sha_password
+
+  - name: set graylog config file - admin password hash
+    replace:
+      path: /etc/graylog/server/server.conf
+      regexp: ^root_password_sha2 .+$
+      replace: "root_password_sha2 = {{ sha_password.stdout.split(' ')[0] }}"
+
+  - name: set graylog config file - rest_listen_uri
+    replace:
+      path: /etc/graylog/server/server.conf
+      regexp: "^(?!.*{% if gl_ip %}{{ gl_ip }}{% else %}{{ ansible_default_ipv4.address }}{% endif %})^rest_listen_uri =.+$"
+      replace: "rest_listen_uri = http://{% if gl_ip %}{{ gl_ip }}{% else %}{{ ansible_default_ipv4.address }}{% endif %}:9000/api/"
+
+  - name: set graylog config file - web_listen_uri
+    replace:
+      path: /etc/graylog/server/server.conf
+      regexp: "^(?!.*{% if gl_ip %}{{ gl_ip }}{% else %}{{ ansible_default_ipv4.address }}{% endif %})^web_listen_uri =.+$"
+      replace: "web_listen_uri = http://{% if gl_ip %}{{ gl_ip }}{% else %}{{ ansible_default_ipv4.address }}{% endif %}:9000/api/"
+
+  - name: configure graylog service
+    service:
+      name: graylog-server
+      enabled: yes
+      state: started 
+
+
