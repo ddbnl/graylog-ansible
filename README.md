@@ -27,5 +27,5 @@ This installs and runs Ansible from a virtual environment:
 5. python2 -m virtualenv .venv
 6. source .venv/bin/activate
 7. sudo pip install ansible
-8. ansible-play -i hosts playbook_name
+8. ansible-playbook -i hosts playbook_name
 9. rm -rf /path/where/playbooks/are (if you don't need Ansible after this)

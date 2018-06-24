@@ -17,153 +17,196 @@
       prompt: "Change memory committed to graylog process (in MBs)"
       private: no
   tasks:
-  - name: "install apt-transport-https"
+  - name: "Install requirement - apt-transport-https"
     apt:
       name: "apt-transport-https"
       update_cache: true
       state: present
 
-  - name: "install openjdk-8-jre-headless"
+  - name: "Install requirement - openjdk-8-jre-headless"
     apt:
       name: "openjdk-8-jre-headless"
       update_cache: true
       state: present
 
-  - name: "install uuid-runtime"
+  - name: "Install requirement - uuid-runtime"
     apt:
       name: "uuid-runtime"
       update_cache: true
       state: present
 
-  - name: "install pwgen"
+  - name: "Install requirement - pwgen"
     apt:
       name: "pwgen"
       update_cache: true
       state: present
 
-  - name: "add mongodb repo key"
+  - name: "Mongodb - Add repo key"
     apt_key:
       keyserver: hkp://keyserver.ubuntu.com:80
       id: 2930ADAE8CAF5059EE73BB4B58712A2291FA4AD5
       state: present
 
-  - name: "install mongodb repo"
+  - name: "Mongodb - Add repo"
     apt_repository:
       repo: deb https://repo.mongodb.org/apt/ubuntu xenial/mongodb-org/3.6 multiverse
       state: present
 
-  - name: "install mongodb"
+  - name: "Mongodb - Install package"
     apt:
       name: "mongodb-org"
       update_cache: true
       state: present
 
-  - name: "configure mongodb service"
+  - name: "Mongodb - configure mongodb"
     service:
       name: "mongod"
       enabled: yes
       state: started
 
-  - name: "add elasticsearch repo key"
+  - name: "Elasticsearch - add repo key"
     apt_key:
       url: https://artifacts.elastic.co/GPG-KEY-elasticsearch
       state: present
 
-  - name: "add elasticsearch repo"
+  - name: "Elasticsearch - add repo"
     apt_repository:
       repo: deb https://artifacts.elastic.co/packages/5.x/apt stable main
       state: present
 
-  - name: "install elasticsearch"
+  - name: "Elasticsearch - install package"
     apt:
       name: "elasticsearch"
       update_cache: true
       state: present
+    notify:
+     - Elasticsearch - restart service
 
-  - name: "set elasticsearch config - java path"
+  - name: "Elasticsearch - configure java path"
     replace:
       path: /etc/default/elasticsearch
       regexp: JAVA_HOME=$
       replace: JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java
+    notify:
+     - Elasticsearch - restart service
 
-  - name: "set elasticsearch config - heap size"
+  - name: "Elasticsearch - configure initial heap size "
     when: es_memory is defined
     lineinfile:
-      path: /etc/default/elasticsearch
-      regexp: "^ES_HEAP_SIZE="
-      line: "ES_HEAP_SIZE={{ es_memory }}m"
+      path: /etc/elasticsearch/jvm.options
+      regexp: '(?!.*-Xms{{ es_memory }}m)^-Xms\d+?[gm]'
+      line: "-Xms{{ es_memory }}m"
       state: present
+    notify:
+     - Elasticsearch - restart service
 
-  - name: "configure elasticsearch service"
+  - name: "Elasticsearch - configure maximum heap size "
+    when: es_memory is defined
+    lineinfile:
+      path: /etc/elasticsearch/jvm.options
+      regexp: '(?!.*-Xmx{{ es_memory }}m)^-Xmx\d+?[gm]'
+      line: "-Xmx{{ es_memory }}m"
+      state: present
+    notify:
+     - Elasticsearch - restart service
+
+  - name: "Elasticsearch - configure service"
     service:
       name: "elasticsearch"
       enabled: yes
       state: started
+    notify:
+     - Elasticsearch - restart service
 
-  - name: "get graylog deb"
+  - name: "Graylog - get package"
     apt:
       deb: https://packages.graylog2.org/repo/packages/graylog-2.4-repository_latest.deb
       update_cache: true
       state: present
 
-  - name: "install graylog deb"
+  - name: "Graylog - install package"
     apt:
       update_cache: true
       name: "graylog-server"
       state: present
+    notify:
+     - Graylog - restart service
 
-  - name: "generate password secret"
+  - name: "Graylog - generate password secret"
     command: pwgen -N 1 -s 96
     register: password_secret
 
-  - name: "generate admin password hash"
+  - name: "Graylog - generate admin password hash"
     shell: "{{ password }} | shasum -a 256"
     register: sha_password
 
-  - name: "set graylog config file - password secret"
+  - name: "Graylog - configure password secret"
     replace:
       path: /etc/graylog/server/server.conf
       regexp: ^password_secret =$
       replace: "password_secret = {{ password_secret.stdout }}"
+    notify:
+     - Graylog - restart service
 
-  - name: "generate admin password hash"
-    shell: "echo -n {{ password }} | shasum -a 256"
-    register: sha_password
-
-  - name: "set graylog config file - admin password hash"
+  - name: "Graylog - configure admin password hash"
     replace:
       path: /etc/graylog/server/server.conf
-      regexp: ^root_password_sha2 .+$
+      regexp: "(?!.*{{ sha_password.stdout.split(' ')[0] }})^root_password_sha2 .+$"
       replace: "root_password_sha2 = {{ sha_password.stdout.split(' ')[0] }}"
+    notify:
+     - Graylog - restart service
 
-  - name: "set graylog config file - rest_listen_uri"
+  - name: "Graylog - configure rest_listen_uri"
     replace:
       path: /etc/graylog/server/server.conf
       regexp: "^(?!.*{% if gl_ip %}{{ gl_ip }}{% else %}{{ ansible_default_ipv4.address }}{% endif %})^rest_listen_uri =.+$"
       replace: "rest_listen_uri = http://{% if gl_ip %}{{ gl_ip }}{% else %}{{ ansible_default_ipv4.address }}{% endif %}:9000/api/"
+    notify:
+     - Graylog - restart service
 
-  - name: "set graylog config file - web_listen_uri"
+  - name: "Graylog - configure web_listen_uri"
     replace:
       path: /etc/graylog/server/server.conf
       regexp: "^(?!.*{% if gl_ip %}{{ gl_ip }}{% else %}{{ ansible_default_ipv4.address }}{% endif %})^web_listen_uri =.+$"
       replace: "web_listen_uri = http://{% if gl_ip %}{{ gl_ip }}{% else %}{{ ansible_default_ipv4.address }}{% endif %}:9000/api/"
+    notify:
+     - Graylog - restart service
 
-  - name: "set graylog config - initial memory"
+  - name: "Graylog config - configure initial memory"
     when: gl_memory is defined
     replace:
       path: /etc/default/graylog-server
       regexp: '(?!.*-Xms{{ gl_memory }}m)-Xms\d+?[gm]'
       replace: "-Xms{{ gl_memory }}m"
+    notify:
+     - Graylog - restart service
 
-  - name: "set graylog config - maximum memory"
+  - name: "Graylog - configure maximum memory"
     when: gl_memory is defined
     replace:
       path: /etc/default/graylog-server
       regexp: '(?!.*-Xmx{{ gl_memory }}m)-Xmx\d+?[gm]'
       replace: "-Xms{{ gl_memory }}m"
+    notify:
+     - Graylog - restart service
 
-  - name: "configure graylog service"
+  - name: "Graylog - configure service"
     service:
       name: "graylog-server"
       enabled: yes
       state: started
+    notify:
+     - Graylog - restart service
+
+  handlers:
+  - name: "Elasticsearch - restart service"
+    service:
+      name: "elasticsearch"
+      state: restarted
+
+  - name: "Graylog - restart service"
+    service:
+      name: "graylog-server"
+      state: restarted
+
+
